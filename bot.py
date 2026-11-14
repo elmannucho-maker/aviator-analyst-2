@@ -1,12 +1,17 @@
 
+import os
 import json
 import time
 import urllib.request
 import urllib.parse
+import urllib.error
 
 print("AVIATOR ANALYST 2.0 STARTING...", flush=True)
 
-TOKEN = input("Enter your Telegram bot token: ").strip()
+TOKEN = os.getenv("BOT_TOKEN")
+
+if not TOKEN:
+    raise RuntimeError("BOT_TOKEN is missing from Render environment variables.")
 
 BASE_URL = f"https://api.telegram.org/bot{TOKEN}/"
 
@@ -20,11 +25,16 @@ def telegram(method, data=None):
     )
 
     with urllib.request.urlopen(request, timeout=40) as response:
-        return json.loads(response.read().decode())
+        result = json.loads(response.read().decode())
+
+    if not result.get("ok"):
+        raise RuntimeError(str(result))
+
+    return result
 
 
 def send_message(chat_id, message):
-    return telegram("sendMessage", {
+    telegram("sendMessage", {
         "chat_id": chat_id,
         "text": message
     })
@@ -34,16 +44,13 @@ def main():
     print("Connecting to Telegram...", flush=True)
 
     result = telegram("getMe")
+    username = result["result"]["username"]
 
-    if not result.get("ok"):
-        raise RuntimeError("Telegram connection failed")
-
-    print("Connected as @" + result["result"]["username"], flush=True)
+    print("Connected as @" + username, flush=True)
 
     telegram("deleteWebhook", {"drop_pending_updates": "false"})
 
-    print("AVIATOR ANALYST 2.0 is running...", flush=True)
-    print("WAITING FOR TELEGRAM MESSAGES...", flush=True)
+    print("AVIATOR ANALYST 2.0 is running!", flush=True)
 
     offset = None
 
@@ -64,20 +71,19 @@ def main():
                 chat_id = chat.get("id")
                 user_text = message.get("text", "").strip()
 
-                print("MESSAGE RECEIVED:", user_text, flush=True)
-
                 if not chat_id:
                     continue
+
+                print("Received:", user_text, flush=True)
 
                 if user_text == "/start":
                     send_message(
                         chat_id,
                         "Welcome to AVIATOR ANALYST 2.0!\n\n"
                         "Crash Round Statistical Analysis Bot\n\n"
-                        "Commands:\n"
                         "/start - Start bot\n"
                         "/help - Show commands\n"
-                        "/status - Check system status"
+                        "/status - System status"
                     )
 
                 elif user_text == "/help":
@@ -100,7 +106,7 @@ def main():
                 else:
                     send_message(
                         chat_id,
-                        "I received your message. Try /help."
+                        "Message received. Try /help."
                     )
 
         except Exception as error:
