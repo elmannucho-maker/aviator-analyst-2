@@ -1,3 +1,8 @@
+
 name = "aviator-analyst-2"
 main = "src/index.js"
 compatibility_date = "2026-11-14"
+
+[[kv_namespaces]]
+binding = "ROUNDS_DB"
+id = "6ba2b85a7dd144bd9a900b3f1edd26da"
