@@ -1,3 +1,4 @@
+JavaScript
 
 export default {
   async fetch(request, env) {
@@ -29,33 +30,39 @@ export default {
       const text = (message.text || "").trim();
       const key = "rounds:" + chatId;
 
-      let reply = "Unknown command. Use /help.";
+      const getRounds = async () =>
+        JSON.parse((await env.ROUNDS_DB.get(key)) || "[]");
 
-      const send = async (text) => {
-        await fetch(
+      const send = async (reply) => {
+        const response = await fetch(
           `https://api.telegram.org/bot${env.BOT_TOKEN}/sendMessage`,
           {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
               chat_id: chatId,
-              text
+              text: reply
             })
           }
         );
+
+        if (!response.ok) {
+          console.error("Telegram send failed:", await response.text());
+        }
       };
+
+      let reply = "Unknown command. Use /help.";
 
       if (text === "/start" || text === "/help") {
         reply =
           "AVIATOR ANALYST 2.0\n\n" +
-          "Crash Round Statistical Analysis\n\n" +
+          "Statistical Analysis Engine\n\n" +
           "/add 1.45 - Record a round\n" +
-          "/stats - View statistics\n" +
+          "/stats - Full statistics\n" +
           "/history - Recent rounds\n" +
-          "/clear - Delete your history\n" +
+          "/clear - Delete history\n" +
           "/help - Show commands\n\n" +
-          "This bot analyses recorded results. " +
-          "It cannot guarantee future crash outcomes.";
+          "Analysis describes past results. It cannot guarantee future outcomes.";
 
       } else if (text.startsWith("/add")) {
         const parts = text.split(/\s+/);
@@ -67,11 +74,9 @@ export default {
           value <= 0 ||
           value > 100000
         ) {
-          reply = "Usage: /add 1.45\nEnter a valid multiplier.";
+          reply = "Usage: /add 1.45";
         } else {
-          const rounds = JSON.parse(
-            (await env.ROUNDS_DB.get(key)) || "[]"
-          );
+          const rounds = await getRounds();
 
           rounds.push({
             value,
@@ -86,9 +91,7 @@ export default {
         }
 
       } else if (text === "/history") {
-        const rounds = JSON.parse(
-          (await env.ROUNDS_DB.get(key)) || "[]"
-        );
+        const rounds = await getRounds();
 
         reply = rounds.length
           ? "RECENT ROUNDS\n\n" +
@@ -99,35 +102,80 @@ export default {
           : "No rounds recorded yet. Try /add 1.45";
 
       } else if (text === "/stats") {
-        const rounds = JSON.parse(
-          (await env.ROUNDS_DB.get(key)) || "[]"
-        );
+        const rounds = await getRounds();
 
         if (!rounds.length) {
-          reply = "No data yet. Record rounds using /add 1.45";
+          reply = "No data yet. Use /add 1.45";
         } else {
           const values = rounds.map(r => Number(r.value));
           const sorted = [...values].sort((a, b) => a - b);
           const sum = values.reduce((a, b) => a + b, 0);
+
           const middle = Math.floor(sorted.length / 2);
           const median = sorted.length % 2
             ? sorted[middle]
             : (sorted[middle - 1] + sorted[middle]) / 2;
 
-          const below2 = values.filter(v => v < 2).length;
-          const above2 = values.filter(v => v >= 2).length;
-          const above10 = values.filter(v => v >= 10).length;
+          const ranges = [
+            { label: "Below 1.5x", test: v => v < 1.5 },
+            { label: "1.5x to below 2x", test: v => v >= 1.5 && v < 2 },
+            { label: "2x to below 5x", test: v => v >= 2 && v < 5 },
+            { label: "5x to below 10x", test: v => v >= 5 && v < 10 },
+            { label: "10x and above", test: v => v >= 10 }
+          ];
+
+          const distribution = ranges.map(range => {
+            const count = values.filter(range.test).length;
+            const percent = (count / values.length * 100).toFixed(1);
+            return range.label + ": " + count + " (" + percent + "%)";
+          }).join("\n");
+
+          const category = v => v < 2 ? "LOW" : "HIGH";
+
+          let currentStreak = 1;
+          let longestLow = 0;
+          let longestHigh = 0;
+          let lowRun = 0;
+          let highRun = 0;
+
+          for (const value of values) {
+            if (value < 2) {
+              lowRun++;
+              highRun = 0;
+            } else {
+              highRun++;
+              lowRun = 0;
+            }
+
+            longestLow = Math.max(longestLow, lowRun);
+            longestHigh = Math.max(longestHigh, highRun);
+          }
+
+          const lastCategory = category(values[values.length - 1]);
+
+          for (let i = values.length - 2; i >= 0; i--) {
+            if (category(values[i]) === lastCategory) {
+              currentStreak++;
+            } else {
+              break;
+            }
+          }
 
           reply =
-            "AVIATOR STATISTICS\n\n" +
+            "AVIATOR ANALYST 2.0\n\n" +
+            "STATISTICS\n" +
             "Rounds: " + values.length + "\n" +
             "Average: " + (sum / values.length).toFixed(2) + "x\n" +
             "Median: " + median.toFixed(2) + "x\n" +
             "Lowest: " + sorted[0].toFixed(2) + "x\n" +
             "Highest: " + sorted[sorted.length - 1].toFixed(2) + "x\n\n" +
-            "Below 2x: " + below2 + "\n" +
-            "2x and above: " + above2 + "\n" +
-            "10x and above: " + above10;
+            "MULTIPLIER DISTRIBUTION\n" +
+            distribution + "\n\n" +
+            "STREAK ANALYSIS (<2x = LOW)\n" +
+            "Current streak: " + currentStreak + " " + lastCategory + "\n" +
+            "Longest LOW streak: " + longestLow + "\n" +
+            "Longest HIGH streak: " + longestHigh + "\n\n" +
+            "Streaks describe past results, not future predictions.";
         }
 
       } else if (text === "/clear") {
@@ -142,6 +190,7 @@ export default {
       return new Response("OK");
 
     } catch (error) {
+      console.error("Webhook error:", error);
       return new Response("Internal error", { status: 500 });
     }
   }
